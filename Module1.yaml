@@ -1,0 +1,81 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: 'AWS::Serverless-2016-10-31'
+Resources:
+  MyStateMachine:
+    Type: 'AWS::Serverless::StateMachine'
+    Properties:
+      DefinitionString: !Sub |
+        {
+          "Comment": "A description of my state machine",
+          "StartAt": "DynamoDB Get Shop Status",
+          "States": {
+            "DynamoDB Get Shop Status": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::dynamodb:getItem",
+              "Parameters": {
+                "TableName": "serverlesspresso-config-table",
+                "Key": {
+                  "PK": {
+                    "S": "config"
+                  }
+                }
+              },
+              "ResultPath": "$.GetStore",
+              "Next": "Shop Open?"
+            },
+            "Shop Open?": {
+              "Type": "Choice",
+              "Choices": [
+                {
+                  "Not": {
+                    "Variable": "$.GetStore.Item.storeOpen.BOOL",
+                    "BooleanEquals": true
+                  },
+                  "Next": "PutEvents"
+                }
+              ],
+              "Default": "ListExecutions"
+            },
+            "ListExecutions": {
+              "Type": "Task",
+              "Next": "Is capacity available?",
+              "Parameters": {
+                "StateMachineArn": "${YOUR_STATE_MACHINE_ARN}",
+                "MaxResults": 100,
+                "StatusFilter": "RUNNING"
+              },
+              "Resource": "arn:aws:states:::aws-sdk:sfn:listExecutions",
+              "ResultPath": "$.isCapacityAvailable"
+            },
+            "Is capacity available?": {
+              "Type": "Choice",
+              "Choices": [
+                {
+                  "Variable": "$.isCapacityAvailable.Executions[20]",
+                  "IsPresent": true,
+                  "Next": "PutEvents"
+                }
+              ],
+              "Default": "Pass"
+            },
+            "PutEvents": {
+              "Type": "Task",
+              "End": true,
+              "Parameters": {
+                "Entries": [
+                  {}
+                ]
+              },
+              "Resource": "arn:aws:states:::aws-sdk:eventbridge:putEvents"
+            },
+            "Pass": {
+              "Type": "Pass",
+              "End": true
+            }
+          }
+        }
+      Role: 'arn:aws:iam::123456789012:role/service-role/MyStateMachineExecutionRole'
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - DynamoDBReadWritePolicy
+        - EventBridgePutEventsPolicy
