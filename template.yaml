@@ -1,1 +1,82 @@
-ttes
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: 'AWS::Serverless-2016-10-31'
+Description: >
+  A description of my state machine.
+
+Resources:
+  StateMachineRole:
+    Type: "AWS::IAM::Role"
+    Properties: 
+      AssumeRolePolicyDocument: 
+        Version: "2012-10-17"
+        Statement: 
+          - Effect: "Allow"
+            Principal: 
+              Service: 
+                - "states.amazonaws.com"
+            Action: 
+              - "sts:AssumeRole"
+      Policies: 
+        - PolicyName: "StateMachinePolicy"
+          PolicyDocument: 
+            Version: "2012-10-17"
+            Statement: 
+              - Effect: "Allow"
+                Action: 
+                  - "dynamodb:GetItem"
+                  - "events:PutEvents"
+                  - "states:ListExecutions"
+                Resource: "*"
+
+  MyStateMachine:
+    Type: "AWS::Serverless::StateMachine"
+    Properties:
+      Definition:
+        Comment: "A description of my state machine"
+        StartAt: "DynamoDB Get Shop Status"
+        States:
+          DynamoDB Get Shop Status:
+            Type: "Task"
+            Resource: "arn:aws:states:::dynamodb:getItem"
+            Parameters:
+              TableName: "serverlesspresso-config-table"
+              Key:
+                PK:
+                  S: "config"
+            ResultPath: "$.GetStore"
+            Next: "Shop Open?"
+          Shop Open?:
+            Type: "Choice"
+            Choices:
+              - Not:
+                  Variable: "$.GetStore.Item.storeOpen.BOOL"
+                  BooleanEquals: true
+                Next: "PutEvents"
+            Default: "ListExecutions"
+          ListExecutions:
+            Type: "Task"
+            Resource: "arn:aws:states:::aws-sdk:sfn:listExecutions"
+            Parameters:
+              StateMachineArn: "arn:aws:states:us-east-1:075810216171:stateMachine:OrderProcessorWorkflow"
+              MaxResults: 100
+              StatusFilter: "RUNNING"
+            ResultPath: "$.isCapacityAvailable"
+            Next: "Is capacity available?"
+          Is capacity available?:
+            Type: "Choice"
+            Choices:
+              - Variable: "$.isCapacityAvailable.Executions[20]"
+                IsPresent: true
+                Next: "PutEvents"
+            Default: "Pass"
+          PutEvents:
+            Type: "Task"
+            Resource: "arn:aws:states:::aws-sdk:eventbridge:putEvents"
+            Parameters:
+              Entries:
+                - {}
+            End: true
+          Pass:
+            Type: "Pass"
+            End: true
+      Role: !GetAtt StateMachineRole.Arn
